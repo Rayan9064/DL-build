@@ -11,7 +11,7 @@ from .model import EgocentricActionBackend
 
 
 LOGGER = logging.getLogger(__name__)
-MODEL_VERSION = "r2plus1d_18_kinetics400_starter"
+MODEL_VERSION = "r2plus1d_18_kinetics400_segmented_v2"
 
 app = Flask(__name__)
 _model: EgocentricActionBackend | None = None

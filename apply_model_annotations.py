@@ -185,7 +185,7 @@ def main() -> None:
     predictions = predict(args.backend_url, backend_tasks)
 
     for task, prediction in zip(tasks, predictions):
-        if args.overwrite and task.get("annotations"):
+        if args.overwrite:
             delete_annotations(args.label_studio_url, args.token, task)
 
         results = to_annotation_results(prediction, task)
