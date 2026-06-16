@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
@@ -61,10 +62,18 @@ class EgocentricActionBackend(LabelStudioMLBase):
                 video_path = self._resolve_video_path(task)
                 label, score, kinetics_label = self._predict_clip(video_path)
                 duration = self._video_duration(video_path)
-                predictions.append(self._format_prediction(label, score, duration, kinetics_label))
+                predictions.append(self._format_prediction(task, label, score, duration, kinetics_label))
             except Exception as exc:
                 LOGGER.exception("Prediction failed for task %s", task.get("id"))
-                predictions.append(self._format_prediction("Idle", 0.0, 1.0, f"error: {exc}"))
+                predictions.append(
+                    self._format_prediction(
+                        task,
+                        "Idle",
+                        0.0,
+                        self._task_duration(task),
+                        f"error: {exc}",
+                    )
+                )
 
         return predictions
 
@@ -104,15 +113,27 @@ class EgocentricActionBackend(LabelStudioMLBase):
             return "Inspect"
         return "Idle"
 
-    def _format_prediction(self, label: str, score: float, duration: float, kinetics_label: str) -> dict[str, Any]:
+    def _format_prediction(
+        self,
+        task: dict[str, Any],
+        label: str,
+        score: float,
+        duration: float,
+        kinetics_label: str,
+    ) -> dict[str, Any]:
+        task_id = task.get("id", "task")
+        region_id = f"{task_id}-{uuid.uuid4().hex[:8]}"
         return {
             "model_version": "r2plus1d_18_kinetics400_starter",
             "score": score,
             "result": [
                 {
+                    "id": region_id,
                     "from_name": "actions",
                     "to_name": "video",
                     "type": "timelinelabels",
+                    "origin": "prediction",
+                    "readonly": True,
                     "value": {
                         "ranges": [
                             {
@@ -127,6 +148,16 @@ class EgocentricActionBackend(LabelStudioMLBase):
                 }
             ],
         }
+
+    def _task_duration(self, task: dict[str, Any]) -> float:
+        meta = task.get("meta") or {}
+        duration = meta.get("duration_sec")
+        if duration is None:
+            duration = meta.get("duration")
+        try:
+            return max(float(duration), 0.001)
+        except (TypeError, ValueError):
+            return 1.0
 
     def _video_duration(self, video_path: Path) -> float:
         video_reader = decord.VideoReader(str(video_path), ctx=decord.cpu(0))
