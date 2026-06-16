@@ -28,12 +28,31 @@ def _normalize_task_payload(data: dict[str, Any]) -> dict[str, Any]:
     if isinstance(data.get("file_upload"), str):
         data["file_upload"] = None
 
-    for annotation in data.get("annotations") or []:
-        completed_by = annotation.get("completed_by")
-        if isinstance(completed_by, dict):
-            annotation["completed_by"] = completed_by.get("id")
+    if "annotations" in data:
+        data["annotations"] = [_normalize_annotation_payload(annotation) for annotation in data.get("annotations") or []]
 
     return data
+
+
+def _normalize_annotation_payload(annotation: dict[str, Any]) -> dict[str, Any]:
+    completed_by = annotation.get("completed_by")
+    if isinstance(completed_by, dict):
+        completed_by = completed_by.get("id")
+
+    # Keep the annotation payload close to Label Studio 1.16 task fixtures.
+    safe_annotation = {
+        "id": annotation.get("id"),
+        "result": annotation.get("result") or [],
+        "created_username": annotation.get("created_username", ""),
+        "created_ago": annotation.get("created_ago", ""),
+        "completed_by": completed_by,
+        "was_cancelled": bool(annotation.get("was_cancelled", False)),
+        "ground_truth": bool(annotation.get("ground_truth", False)),
+        "created_at": annotation.get("created_at"),
+        "updated_at": annotation.get("updated_at"),
+        "lead_time": annotation.get("lead_time"),
+    }
+    return safe_annotation
 
 
 def _patch_label_studio_task_api() -> None:
@@ -83,6 +102,43 @@ def _patch_label_studio_data_manager_serializer() -> None:
     patched_get_file_upload._egocentric_patched = True  # type: ignore[attr-defined]
     serializer_cls.get_file_upload = patched_get_file_upload
     LOGGER.info("Patched DataManagerTaskSerializer.get_file_upload for frontend compatibility")
+
+
+def _patch_label_studio_annotations_api() -> None:
+    tasks_api = _import_any("tasks.api", "label_studio.tasks.api")
+    if tasks_api is None:
+        return
+    try:
+        AnnotationsListAPI = tasks_api.AnnotationsListAPI
+        AnnotationAPI = tasks_api.AnnotationAPI
+    except Exception:
+        return
+
+    original_list_get = getattr(AnnotationsListAPI, "get", None)
+    if original_list_get is not None and not getattr(original_list_get, "_egocentric_patched", False):
+
+        def patched_list_get(self, request, *args, **kwargs):
+            response = original_list_get(self, request, *args, **kwargs)
+            if isinstance(response.data, list):
+                response.data = [_normalize_annotation_payload(item) for item in response.data]
+            return response
+
+        patched_list_get._egocentric_patched = True  # type: ignore[attr-defined]
+        AnnotationsListAPI.get = patched_list_get
+
+    original_annotation_get = getattr(AnnotationAPI, "get", None)
+    if original_annotation_get is not None and not getattr(original_annotation_get, "_egocentric_patched", False):
+
+        def patched_annotation_get(self, request, *args, **kwargs):
+            response = original_annotation_get(self, request, *args, **kwargs)
+            if isinstance(response.data, dict):
+                response.data = _normalize_annotation_payload(response.data)
+            return response
+
+        patched_annotation_get._egocentric_patched = True  # type: ignore[attr-defined]
+        AnnotationAPI.get = patched_annotation_get
+
+    LOGGER.info("Patched Label Studio annotation APIs for frontend compatibility")
 
 
 def _patch_label_studio_localfiles_view() -> None:
@@ -167,4 +223,5 @@ def _patch_label_studio_localfiles_view() -> None:
 
 _patch_label_studio_task_api()
 _patch_label_studio_data_manager_serializer()
+_patch_label_studio_annotations_api()
 _patch_label_studio_localfiles_view()

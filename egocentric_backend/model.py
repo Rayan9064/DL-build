@@ -61,8 +61,8 @@ class EgocentricActionBackend(LabelStudioMLBase):
             try:
                 video_path = self._resolve_video_path(task)
                 label, score, kinetics_label = self._predict_clip(video_path)
-                duration = self._video_duration(video_path)
-                predictions.append(self._format_prediction(task, label, score, duration, kinetics_label))
+                frame_count = self._video_frame_count(video_path)
+                predictions.append(self._format_prediction(task, label, score, frame_count, kinetics_label))
             except Exception as exc:
                 LOGGER.exception("Prediction failed for task %s", task.get("id"))
                 predictions.append(
@@ -70,7 +70,7 @@ class EgocentricActionBackend(LabelStudioMLBase):
                         task,
                         "Idle",
                         0.0,
-                        self._task_duration(task),
+                        self._task_frame_count(task),
                         f"error: {exc}",
                     )
                 )
@@ -118,11 +118,12 @@ class EgocentricActionBackend(LabelStudioMLBase):
         task: dict[str, Any],
         label: str,
         score: float,
-        duration: float,
+        frame_count: int,
         kinetics_label: str,
     ) -> dict[str, Any]:
         task_id = task.get("id", "task")
         region_id = f"{task_id}-{uuid.uuid4().hex[:8]}"
+        end_frame = max(frame_count - 1, 0)
         return {
             "model_version": "r2plus1d_18_kinetics400_starter",
             "score": score,
@@ -138,7 +139,7 @@ class EgocentricActionBackend(LabelStudioMLBase):
                         "ranges": [
                             {
                                 "start": 0,
-                                "end": max(duration, 0.001),
+                                "end": end_frame,
                             }
                         ],
                         "timelinelabels": [label],
@@ -159,10 +160,20 @@ class EgocentricActionBackend(LabelStudioMLBase):
         except (TypeError, ValueError):
             return 1.0
 
-    def _video_duration(self, video_path: Path) -> float:
+    def _task_frame_count(self, task: dict[str, Any]) -> int:
+        meta = task.get("meta") or {}
+        fps = meta.get("fps") or 30.0
+        try:
+            fps_value = max(float(fps), 1.0)
+        except (TypeError, ValueError):
+            fps_value = 30.0
+
+        duration = self._task_duration(task)
+        return max(int(round(duration * fps_value)), 1)
+
+    def _video_frame_count(self, video_path: Path) -> int:
         video_reader = decord.VideoReader(str(video_path), ctx=decord.cpu(0))
-        fps = video_reader.get_avg_fps() or 30.0
-        return float(len(video_reader) / fps)
+        return max(int(len(video_reader)), 1)
 
     def _resolve_video_path(self, task: dict[str, Any]) -> Path:
         video_value = (task.get("data") or {}).get("video")
