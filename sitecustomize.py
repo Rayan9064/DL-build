@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
+import os
+import posixpath
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 
@@ -81,5 +85,86 @@ def _patch_label_studio_data_manager_serializer() -> None:
     LOGGER.info("Patched DataManagerTaskSerializer.get_file_upload for frontend compatibility")
 
 
+def _patch_label_studio_localfiles_view() -> None:
+    views_module = _import_any("core.views", "label_studio.core.views")
+    if views_module is None:
+        return
+
+    original_view = getattr(views_module, "localfiles_data", None)
+    if original_view is None or getattr(original_view, "_egocentric_patched", False):
+        return
+
+    try:
+        from django.conf import settings
+        from django.db.models import CharField, F, Value
+        from django.http import HttpResponseForbidden, HttpResponseNotFound
+        from django.utils._os import safe_join
+        from io_storages.localfiles.models import LocalFilesImportStorage
+        from ranged_fileresponse import RangedFileResponse
+        from rest_framework.decorators import api_view, permission_classes
+        from rest_framework.permissions import IsAuthenticated
+    except Exception:
+        return
+
+    @api_view(["GET"])
+    @permission_classes([IsAuthenticated])
+    def patched_localfiles_data(request):
+        path = request.GET.get("d")
+        if settings.LOCAL_FILES_SERVING_ENABLED is False:
+            return HttpResponseForbidden(
+                "Serving local files can be dangerous, so it's disabled by default. "
+                "You can enable it with LOCAL_FILES_SERVING_ENABLED environment variable, "
+                "please check docs: https://labelstud.io/guide/storage.html#Local-storage"
+            )
+
+        if not path or not request.user.is_authenticated:
+            return HttpResponseForbidden()
+
+        normalized_path = posixpath.normpath(path).lstrip("/")
+        candidate_roots = [settings.LOCAL_FILES_DOCUMENT_ROOT, os.getcwd()]
+        full_path = None
+        for root in candidate_roots:
+            try:
+                candidate = Path(safe_join(root, normalized_path))
+            except Exception:
+                continue
+            if candidate.exists():
+                full_path = candidate
+                break
+
+        if full_path is None:
+            return HttpResponseNotFound()
+
+        user_has_permissions = False
+        localfiles_storage = LocalFilesImportStorage.objects.annotate(
+            _full_path=Value(os.path.dirname(full_path), output_field=CharField())
+        ).filter(_full_path__startswith=F("path"))
+        if localfiles_storage.exists():
+            user_has_permissions = any(storage.project.has_permission(request.user) for storage in localfiles_storage)
+
+        if not user_has_permissions:
+            # Local dev compatibility: allow authenticated users to load files
+            # from the configured document root or current working directory
+            # without requiring a separate Local Files Storage connection.
+            full_path_str = str(full_path.resolve())
+            allowed_roots = {
+                str(Path(settings.LOCAL_FILES_DOCUMENT_ROOT).resolve()),
+                str(Path(os.getcwd()).resolve()),
+            }
+            user_has_permissions = any(full_path_str.startswith(root) for root in allowed_roots)
+
+        if not user_has_permissions or not full_path.exists():
+            return HttpResponseNotFound()
+
+        content_type, encoding = mimetypes.guess_type(str(full_path))
+        content_type = content_type or "application/octet-stream"
+        return RangedFileResponse(request, open(full_path, mode="rb"), content_type)
+
+    patched_localfiles_data._egocentric_patched = True  # type: ignore[attr-defined]
+    views_module.localfiles_data = patched_localfiles_data
+    LOGGER.info("Patched Label Studio localfiles_data for local dev file serving")
+
+
 _patch_label_studio_task_api()
 _patch_label_studio_data_manager_serializer()
+_patch_label_studio_localfiles_view()
