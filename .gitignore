@@ -1,0 +1,34 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local runtime artifacts
+*.log
+*.sqlite3
+work/
+work_backend_template/
+
+# Docker / model / dataset outputs
+egocentric_samples/
+hf_cache/
+torch_cache/
+
+# Keep the repo structure docs-only; large source videos, converted videos,
+# and task exports are generated locally and should not be pushed.

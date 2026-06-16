@@ -1,0 +1,88 @@
+services:
+  label-studio:
+    build: .
+    image: egocentric-labeling:latest
+    command:
+      - label-studio
+      - start
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --no-browser
+      - --data-dir
+      - /label-studio/data
+    environment:
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /app
+    ports:
+      - "8080:8080"
+    volumes:
+      - label_studio_data:/label-studio/data
+      - ./egocentric_samples:/app/egocentric_samples
+      - ./label_config.xml:/app/label_config.xml:ro
+    depends_on:
+      - ml-backend
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+
+  ml-backend:
+    build: .
+    image: egocentric-labeling:latest
+    command:
+      - python
+      - -m
+      - egocentric_backend.server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9090"
+      - --preload
+    environment:
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /app
+      TORCH_HOME: /root/.cache/torch
+    ports:
+      - "9090:9090"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    volumes:
+      - torch_cache:/root/.cache/torch
+      - ./egocentric_samples:/app/egocentric_samples:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://127.0.0.1:9090/health', timeout=5).raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  exporter:
+    profiles:
+      - tools
+    build: .
+    image: egocentric-labeling:latest
+    command:
+      - python
+      - export_egocentric_samples.py
+      - --count
+      - "${SAMPLE_COUNT:-5}"
+      - --output-dir
+      - egocentric_samples
+      - --shuffle-buffer
+      - "0"
+      - --overwrite
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+      - ./egocentric_samples:/app/egocentric_samples
+
+volumes:
+  label_studio_data:
+  torch_cache:
+  hf_cache:

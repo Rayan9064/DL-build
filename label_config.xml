@@ -1,0 +1,9 @@
+<View>
+  <Header value="Factory action timeline"/>
+  <Video name="video" value="$video" sync="audio" timelineHeight="160"/>
+  <TimelineLabels name="actions" toName="video">
+    <Label value="Assemble" background="#1f77b4"/>
+    <Label value="Inspect" background="#ff7f0e"/>
+    <Label value="Idle" background="#2ca02c"/>
+  </TimelineLabels>
+</View>
